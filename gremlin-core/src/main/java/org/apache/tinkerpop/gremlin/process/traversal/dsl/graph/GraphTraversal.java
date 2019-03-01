@@ -146,6 +146,7 @@ import org.apache.tinkerpop.gremlin.structure.PropertyType;
 import org.apache.tinkerpop.gremlin.structure.T;
 import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+import org.apache.tinkerpop.gremlin.structure.util.empty.EmptyGraph;
 import org.apache.tinkerpop.gremlin.util.function.ConstantSupplier;
 
 import java.util.ArrayList;
@@ -2081,13 +2082,40 @@ public interface GraphTraversal<S, E> extends Traversal<S, E> {
 
         // if it can be detected that this call to property() is related to an addV/E() then we can attempt to fold
         // the properties into that step to gain an optimization for those graphs that support such capabilities.
-        final Step endStep = this.asAdmin().getEndStep();
-        if ((endStep instanceof AddVertexStep || endStep instanceof AddEdgeStep || endStep instanceof AddVertexStartStep || endStep instanceof AddEdgeStartStep) &&
-                keyValues.length == 0 && null == cardinality) {
+        Step endStep = this.asAdmin().getEndStep();
+
+        // always try to fold the property() into the initial "AddElementStep" as the performance will be better
+        // and as it so happens with T the value must be set by way of that approach otherwise you get an error.
+        // it should be safe to execute this loop this way as we'll either hit an "AddElementStep" or an "EmptyStep".
+        // if empty, it will just use the regular AddPropertyStep being tacked on to the end of the traversal as usual
+        while (endStep instanceof AddPropertyStep) {
+            endStep = endStep.getPreviousStep();
+        }
+
+        // it's possible to fold the property() into the Mutating step if there are no metaproperties (i.e. keyValues)
+        // and if (1) the key is an instance of T OR OR (3) the key is a string and the cardinality of the key can be
+        // determined from the graph to be single. EmptyGraph assumes list cardinality as its default which means that
+        // we won't see folding for the client side of remote traversals, however the server side may yet construct
+        // the traversal with folding after the bytecode is formed into a traversal on that end. Note that checking
+        // for single cardinality of the parameter doesn't work well because once folded we lose the cardinality
+        // argument associated to the key/value pair and then it relies on the graph default. that means that if you
+        // do:
+        //
+        // g.addV().property(single, 'k',1).property(single,'k',2)
+        //
+        // you could end up with whatever the cardinality is for the key which might seem "wrong" if you were explicit
+        // about the specification of "single".
+        if ((endStep instanceof AddVertexStep || endStep instanceof AddEdgeStep ||
+                endStep instanceof AddVertexStartStep || endStep instanceof AddEdgeStartStep) &&
+                keyValues.length == 0 &&
+                (key instanceof T || (key instanceof String &&
+                                (null == cardinality && asAdmin().getGraph().orElse(EmptyGraph.instance()).
+                                            features().vertex().getCardinality((String) key) == VertexProperty.Cardinality.single)))) {
             ((Mutating) endStep).addPropertyMutations(key, value);
         } else {
-            this.asAdmin().addStep(new AddPropertyStep(this.asAdmin(), cardinality, key, value));
-            ((AddPropertyStep) this.asAdmin().getEndStep()).addPropertyMutations(keyValues);
+            final AddPropertyStep<Element> addPropertyStep = new AddPropertyStep<>(this.asAdmin(), cardinality, key, value);
+            this.asAdmin().addStep(addPropertyStep);
+            addPropertyStep.addPropertyMutations(keyValues);
         }
         return this;
     }
