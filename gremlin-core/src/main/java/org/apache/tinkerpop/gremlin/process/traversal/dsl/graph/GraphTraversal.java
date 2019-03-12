@@ -2092,6 +2092,7 @@ public interface GraphTraversal<S, E> extends Traversal<S, E> {
             endStep = endStep.getPreviousStep();
         }
 
+        // edge properties can always be folded as there is no cardinality/metaproperties. for a vertex mutation,
         // it's possible to fold the property() into the Mutating step if there are no metaproperties (i.e. keyValues)
         // and if (1) the key is an instance of T OR OR (3) the key is a string and the cardinality of the key can be
         // determined from the graph to be single. EmptyGraph assumes list cardinality as its default which means that
@@ -2105,12 +2106,12 @@ public interface GraphTraversal<S, E> extends Traversal<S, E> {
         //
         // you could end up with whatever the cardinality is for the key which might seem "wrong" if you were explicit
         // about the specification of "single".
-        if ((endStep instanceof AddVertexStep || endStep instanceof AddEdgeStep ||
-                endStep instanceof AddVertexStartStep || endStep instanceof AddEdgeStartStep) &&
-                keyValues.length == 0 &&
-                (key instanceof T || (key instanceof String &&
-                                (null == cardinality && asAdmin().getGraph().orElse(EmptyGraph.instance()).
-                                            features().vertex().getCardinality((String) key) == VertexProperty.Cardinality.single)))) {
+        if ((endStep instanceof AddEdgeStep || endStep instanceof AddEdgeStartStep) ||
+                ((endStep instanceof AddVertexStep || endStep instanceof AddVertexStartStep) &&
+                  keyValues.length == 0 &&
+                  (key instanceof T || (key instanceof String &&
+                                  (null == cardinality && asAdmin().getGraph().orElse(EmptyGraph.instance()).
+                                              features().vertex().getCardinality((String) key) == VertexProperty.Cardinality.single))))) {
             ((Mutating) endStep).addPropertyMutations(key, value);
         } else {
             final AddPropertyStep<Element> addPropertyStep = new AddPropertyStep<>(this.asAdmin(), cardinality, key, value);
